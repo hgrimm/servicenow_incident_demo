@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"html/template"
 	"io"
@@ -13,7 +14,16 @@ import (
 	"strings"
 )
 
-// Datenstruktur für die Antwort des ServiceNow Incident-Endpunkts
+// add flag for service server hostname
+var (
+	serviceNowHostname string
+)
+
+func init() {
+	flag.StringVar(&serviceNowHostname, "hostname", "", "ServiceNow hostname. example: dev12345.service-now.com")
+}
+
+// Data structure for the response of the ServiceNow Incident endpoint
 type ServiceNowIncidentResp struct {
 	Result struct {
 		Number string `json:"number"`
@@ -26,20 +36,20 @@ func openURL(url string) error {
 
 	switch runtime.GOOS {
 	case "windows":
-		// Unter Windows: cmd /c start "" <URL>
+		// On Windows: cmd /c start "" <URL>
 		cmd = "cmd"
 		args = []string{"/c", "start", "", url}
 	case "darwin":
-		// Auf macOS: open <URL>
+		// On macOS: open <URL>
 		cmd = "open"
 		args = []string{url}
 	default:
 		if isWSL() {
-			// Unter WSL: cmd.exe /c start "" <URL>
+			// On WSL: cmd.exe /c start "" <URL>
 			cmd = "cmd.exe"
 			args = []string{"/c", "start", "", url}
 		} else {
-			// Auf Linux: xdg-open <URL>
+			// On Linux: xdg-open <URL>
 			cmd = "xdg-open"
 			args = []string{url}
 		}
@@ -48,7 +58,7 @@ func openURL(url string) error {
 	return exec.Command(cmd, args...).Start()
 }
 
-// isWSL prüft, ob der Code in der Windows Subsystem for Linux Umgebung läuft.
+// isWSL checks whether the code is running in a Windows Subsystem for Linux environment.
 func isWSL() bool {
 	releaseData, err := exec.Command("uname", "-r").Output()
 	if err != nil {
@@ -58,16 +68,24 @@ func isWSL() bool {
 }
 
 func main() {
-	// HTML-Formular-Template
+	flag.Parse()
+
+	if serviceNowHostname == "" {
+		fmt.Printf("Hostname must not be empty\n")
+		flag.PrintDefaults()
+		os.Exit(1)
+	}
+
+	// HTML form template
 	formTemplate := `
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
 	<meta charset="UTF-8">
-	<title>ServiceNow Incident erstellen</title>
+	<title>Create a new ServiceNow Incident</title>
 </head>
 <body>
-	<h1>Neues Incident erstellen</h1>
+	<h1>Create a new Incident</h1>
 	<form action="/submit" method="post">
 		<label for="short_description">short_description:</label><br>
 		<input type="text" id="short_description" name="short_description" required><br><br>
@@ -94,18 +112,18 @@ func main() {
 		<input type="text" id="cmdb_ci" name="cmdb_ci" value="ded5656983821210e5f1b3a6feaad3c6"><br><br>
 
 		<hr>
-		<p>Anmeldedaten:</p>
+		<p>Login credentials:</p>
 
-		<label for="username">username (optional, falls kein API Key):</label><br>
+		<label for="username">username (optional, if no API key):</label><br>
 		<input type="text" id="username" name="username"><br><br>
 
-		<label for="password">password (optional, falls kein API Key):</label><br>
+		<label for="password">password (optional, if no API key):</label><br>
 		<input type="password" id="password" name="password"><br><br>
 
-		<label for="apikey">API-Key (optional, falls kein Benutzername/Passwort):</label><br>
+		<label for="apikey">API key (optional, if no username/password):</label><br>
 		<input type="text" id="apikey" name="apikey"><br><br>
 
-		<input type="submit" value="Incident erstellen">
+		<input type="submit" value="Create Incident">
 	</form>
 </body>
 </html>
@@ -121,11 +139,11 @@ func main() {
 
 	http.HandleFunc("/submit", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Methode nicht erlaubt", http.StatusMethodNotAllowed)
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
-		// Form-Daten auslesen
+		// Read form data
 		shortDescription := r.FormValue("short_description")
 		category := r.FormValue("category")
 		subcategory := r.FormValue("subcategory")
@@ -138,10 +156,11 @@ func main() {
 		password := r.FormValue("password")
 		apikey := r.FormValue("apikey")
 
-		url := "https://dev247807.service-now.com/api/now/table/incident"
-		fmt.Printf("URL: %s\n", url)
+		servicenowUrl := fmt.Sprintf("https://%s/api/now/table/incident", serviceNowHostname)
 
-		// Payload erstellen
+		fmt.Printf("Endpoint URL: %s\n", servicenowUrl)
+
+		// Create payload
 		payload := map[string]interface{}{
 			"short_description": shortDescription,
 			"category":          category,
@@ -153,54 +172,54 @@ func main() {
 			"cmdb_ci":           cmdbCI,
 		}
 
-		// JSON erstellen
+		// Create JSON
 		jsonData, err := json.Marshal(payload)
 		if err != nil {
-			fmt.Printf("Fehler beim JSON-Encoding: %v\n", err)
-			http.Error(w, "Fehler beim Erstellen des Requests", http.StatusInternalServerError)
+			fmt.Printf("Error during JSON encoding: %v\n", err)
+			http.Error(w, "Error creating the request", http.StatusInternalServerError)
 			return
 		}
 
-		// HTTP-Request erstellen
-		req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+		// Create HTTP request
+		req, err := http.NewRequest("POST", servicenowUrl, bytes.NewBuffer(jsonData))
 		if err != nil {
-			fmt.Printf("Fehler beim Erstellen des Requests: %v\n", err)
-			http.Error(w, "Fehler beim Erstellen des Requests", http.StatusInternalServerError)
+			fmt.Printf("Error creating the request: %v\n", err)
+			http.Error(w, "Error creating the request", http.StatusInternalServerError)
 			return
 		}
 
-		// Header setzen
+		// Set headers
 		req.Header.Set("Accept", "application/json")
 		req.Header.Set("Content-Type", "application/json")
 
 		if username != "" && password != "" {
-			fmt.Printf("Benutzername und Passwort werden verwendet\n")
+			fmt.Printf("Using username and password\n")
 			req.SetBasicAuth(username, password)
 		} else if apikey != "" {
-			fmt.Printf("API-Key wird verwendet\n")
+			fmt.Printf("Using API key\n")
 			req.Header.Set("X-sn-apikey", apikey)
 		} else {
-			fmt.Printf("Fehler: Weder Benutzer/Passwort noch API-Key\n")
-			http.Error(w, "Authentifizierungsdaten fehlen", http.StatusBadRequest)
+			fmt.Printf("Error: Neither username/password nor API key provided\n")
+			http.Error(w, "Authentication data missing", http.StatusBadRequest)
 			return
 		}
 
 		client := &http.Client{}
 
-		// Request abschicken
+		// Send request
 		resp, err := client.Do(req)
 		if err != nil {
-			fmt.Printf("Fehler beim Senden des Requests: %v\n", err)
-			http.Error(w, "Fehler beim Senden des Requests", http.StatusInternalServerError)
+			fmt.Printf("Error sending the request: %v\n", err)
+			http.Error(w, "Error sending the request", http.StatusInternalServerError)
 			return
 		}
 		defer resp.Body.Close()
 
-		// Antwort lesen
+		// Read response
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			fmt.Printf("Fehler beim Lesen der Antwort: %v\n", err)
-			http.Error(w, "Fehler beim Lesen der Antwort", http.StatusInternalServerError)
+			fmt.Printf("Error reading the response: %v\n", err)
+			http.Error(w, "Error reading the response", http.StatusInternalServerError)
 			return
 		}
 
@@ -210,32 +229,30 @@ func main() {
 		var serviceNowResp ServiceNowIncidentResp
 		err = json.Unmarshal(body, &serviceNowResp)
 		if err != nil {
-			fmt.Printf("Fehler beim Parsen der Antwort: %v\n", err)
-			http.Error(w, "Fehler beim Verarbeiten der Antwort", http.StatusInternalServerError)
+			fmt.Printf("Error parsing the response: %v\n", err)
+			http.Error(w, "Error processing the response", http.StatusInternalServerError)
 			return
 		}
 
 		if serviceNowResp.Result.Number == "" {
-			fmt.Printf("Fehler: Keine Incident-Nummer im Response\n")
-			http.Error(w, "Fehler: Incident-Nummer fehlt im ServiceNow-Response", http.StatusInternalServerError)
+			fmt.Printf("Error: No incident number in the response\n")
+			http.Error(w, "Error: Incident number missing in ServiceNow response", http.StatusInternalServerError)
 			return
 		}
 
-		fmt.Printf("Incident erstellt: %s\n", serviceNowResp.Result.Number)
+		fmt.Printf("Incident created: %s\n", serviceNowResp.Result.Number)
 
-		// Erfolgreiche Ausgabe für den Nutzer
-		fmt.Fprintf(w, "Incident wurde erfolgreich erstellt: %s", serviceNowResp.Result.Number)
+		// Successful output for the user
+		fmt.Fprintf(w, "Incident was successfully created: %s", serviceNowResp.Result.Number)
 	})
 
-	// call openURL to open the browser with the URL localhost:8080 after the server is started
-	go openURL("http://localhost:8080")
+	localServerAddr := "localhost:8080"
+	go openURL("http://" + localServerAddr)
 
-	// Server auf Port 8080 starten
-	port := ":8080"
-	fmt.Printf("Starte Server auf %s\n", port)
-	err := http.ListenAndServe(port, nil)
+	fmt.Printf("Starting server on %s\n", localServerAddr)
+	err := http.ListenAndServe(localServerAddr, nil)
 	if err != nil {
-		fmt.Printf("Fehler beim Starten des Servers: %v\n", err)
+		fmt.Printf("Error starting the server: %v\n", err)
 		os.Exit(1)
 	}
 }
